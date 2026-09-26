@@ -7,8 +7,8 @@ unity/[Bb]uilds/
 unity/[Ll]ogs/
 unity/[Uu]ser[Ss]ettings/
 unity/[Mm]emoryCaptures/
-*.csproj
-*.sln
+unity/*.csproj
+unity/*.sln
 *.apk
 *.aab
 
@@ -22,3 +22,8 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# .NET test harness
+tools/core-tests/bin/
+tools/core-tests/obj/
+*.db

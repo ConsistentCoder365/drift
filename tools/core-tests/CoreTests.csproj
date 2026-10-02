@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Runs Drift.Core and its EditMode tests on plain .NET, without Unity, against a small
+    UnityEngine shim (Shim/UnityEngineShim.cs). The real tests still live in the Unity project;
+    this only includes them. Run:  dotnet test tools/core-tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>Drift.Tests</RootNamespace>
+    <NoWarn>$(NoWarn);CS8632</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Shim/**/*.cs" />
+    <Compile Include="CrossLanguage/**/*.cs" />
+    <Compile Include="../../unity/Assets/Drift/Scripts/Core/**/*.cs" />
+    <Compile Include="../../unity/Assets/Drift/Tests/EditMode/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+</Project>

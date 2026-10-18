@@ -1,0 +1,51 @@
+# Drift backend: FastAPI + PostgreSQL (runs, ghosts) + Redis (leaderboard).
+#   docker compose up --build        then open http://localhost:8000/docs
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://drift:drift@postgres:5432/drift
+      REDIS_URL: redis://redis:6379/0
+      TRACKS_DIR: /app/tracks
+      TUNING_PATH: /app/config/tuning.json
+    volumes:
+      # The server reads the same track file as the game, so checkpoint gates always match.
+      - ./unity/Assets/Resources/Tracks:/app/tracks:ro
+      # Edit tuning.json and the next /config call serves it: retuning without a new APK.
+      - ./backend/config:/app/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: drift
+      POSTGRES_PASSWORD: drift
+      POSTGRES_DB: drift
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drift -d drift"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:
+  redisdata:

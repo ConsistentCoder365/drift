@@ -4,7 +4,7 @@
 
 Drifting charges nitro, nitro shortens laps, and your best lap races beside you as a ghost.
 
-> **Status: in active development.** This README describes the design and architecture. The Unity project, the FastAPI backend, a playable APK and a gameplay GIF will be pushed here as they're finished. Every performance number below will come from a real measurement, and until then it is marked *TBD*.
+> **Status: in active development.** The Unity project and the FastAPI backend are in the repo. The gameplay core and the backend are unit tested; device profiling, a playable APK and a gameplay GIF are next. Every performance number below will come from a real measurement, and until then it is marked *TBD*.
 
 ---
 
@@ -27,6 +27,25 @@ Drifting charges nitro, nitro shortens laps, and your best lap races beside you 
 | REST API design | A FastAPI service for runs, the leaderboard, ghost downloads and remote config |
 | Systems thinking | Server-side lap validation from replay data, offline-first client, remote tuning without an app update |
 | AI-assisted development | A log of what was built with Claude Code and what was rewritten by hand |
+
+---
+
+## Quick start
+
+**Play in the editor**
+1. Open `unity/` with Unity 6 LTS (6000.0.x). On first open, `Drift > Setup Project` creates the mobile URP asset, materials, `Assets/Scenes/Main.unity` and the Android settings.
+2. Open `Assets/Scenes/Main.unity` and press Play.
+
+**Run the backend**
+```bash
+docker compose up --build
+```
+API docs are at http://localhost:8000/docs. The game works without it and shows "Offline".
+
+**Put it on a phone**
+1. Use `Drift > Build Android APK (Release)`, or the Development + Profiler build for profiling.
+2. Install it with `adb install -r unity/Builds/Android/Drift.apk`.
+3. In the menu, set **Server** to your laptop's LAN address, for example `http://192.168.1.10:8000`.
 
 ---
 
@@ -83,7 +102,8 @@ Ghosts record **transforms, not inputs**. Unity's physics isn't guaranteed to be
 
 - Recording writes position and rotation every physics step into **preallocated arrays**, so nothing is allocated during a race.
 - Playback finds the two samples around the current time, lerps position and slerps rotation between them, so the ghost moves smoothly at any frame rate.
-- **Compression:** positions are quantized to 16 bits per axis within the track bounds, and rotations use **smallest-three quaternion packing** (2-bit index + 3 × 10 bits). A sample shrinks from 32 bytes raw to **12 bytes**, including a sequence number.
+- **Compression:** positions are quantized to 16 bits per axis within the track bounds, and rotations use **smallest-three quaternion packing** (2-bit index + 3 × 10 bits). A sample shrinks from 32 bytes raw to **12 bytes**, including a sequence number. Measured by a unit test, a 30-second lap of 1,500 samples goes from 48,000 B to 18,036 B (**2.66×**), with position error around 6 mm and rotation error under 0.25°.
+- Rotation components use codes 0 to 1022 rather than 0 to 1023, so 0.0 is stored exactly. Every rotation of this car is yaw-only, so its x and z components are always zero; with 1023 steps they came back about 0.14° off.
 - Every sample carries a sequence number, so the server can check a submitted lap against its recorded path.
 
 ```
@@ -139,7 +159,7 @@ A small FastAPI service, run locally with Docker Compose.
 | `GET` | `/config` | Tuning values: grip, nitro gain, combo window, … |
 
 **Storage**
-- **Redis:** one sorted set per track, scored by best lap in ms. `ZADD ... LT` means only a faster lap replaces a player's entry; `ZRANGE` gives the top N and `ZRANK` the player's position.
+- **Redis:** one sorted set per track, scored by best lap in ms. `ZADD ... LT` means only a faster lap replaces a player's entry; `ZRANGE` gives the top N and `ZRANK` the player's position. A small Lua script updates the score and the player's ghost link in one atomic step.
 - **PostgreSQL:** a `runs` table (id, player, track, lap times, created_at, validated) with the ghost stored as `bytea` (a few tens of KB each).
 
 **Server-side lap validation (basic anti-cheat)**
@@ -149,9 +169,36 @@ The client can't be trusted, so the server replays the ghost's path before accep
 - Speed between consecutive samples never exceeds the car's top speed with nitro.
 - The path crosses every checkpoint gate in order, using the same track definition the client loads.
 
-A run that fails is stored with `validated = false` and kept off the leaderboard. This won't stop a determined cheater, but it's a realistic first layer. It is tested by hand-editing a ghost (teleporting a sample) and checking that the server rejects it.
+A run that fails is stored with `validated = false` and kept off the leaderboard. This won't stop a determined cheater, but it's a realistic first layer. It is tested by tampering with ghosts and checking that the server rejects them. With the stack running:
+
+```bash
+cd backend && python -m tools.cli demo
+```
+
+```
+honest       -> validated: True,  rank 1
+teleport     -> validated: False, reason too_fast
+drop         -> validated: False, reason sample_count_mismatch
+shortcut     -> validated: False, reason checkpoints_missed
+speedup      -> validated: False, reason sample_count_mismatch
+edited time  -> validated: False, reason sample_count_mismatch
+```
+
+`python -m tools.cli tamper lap.bin bad.bin --mode shortcut` edits a ghost by hand, and `tools.cli submit` sends it.
 
 **Remote config:** `/config` retunes grip or nitro without a new APK, the same idea live-service games use for balance changes and timed events.
+
+---
+
+## Tests
+
+| Suite | How to run | Tests |
+| --- | --- | --- |
+| Unity EditMode: physics, scoring, laps, ghost codec, recorder | Window > General > Test Runner > EditMode > Run All | 57 |
+| The same tests on plain .NET, no Unity needed | `docker run --rm -v "$PWD":/src -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test tools/core-tests` | 57 |
+| Backend: codec, validation, API | `cd backend && pip install -r requirements-dev.txt && pytest` | 37 |
+
+`tools/core-tests` compiles the real `Drift.Core` sources and tests against a small stand-in for Unity's math types. A ghost written by the C# encoder is checked by the Python tests, which decode it and re-encode it to identical bytes.
 
 ---
 
@@ -183,22 +230,37 @@ Budget: a steady **60 fps** on a mid-range Android phone, so under 16.7 ms per f
 | GC alloc per frame (B) | TBD | TBD |
 | Load to race (s) | TBD | TBD |
 
-*Filled in only with measured numbers from the Unity Profiler on a real device.*
+*Filled in only with measured numbers from the Unity Profiler on a real device.* The measuring steps and the full change log are in [docs/performance-log.md](docs/performance-log.md).
 
 ---
 
 ## Roadmap
 
 - [x] Design doc and architecture
-- [ ] Core gameplay: car physics, drift scoring, nitro, laps
-- [ ] Ghost recording, compression and playback
-- [ ] Unit tests for `DriftPhysics`, `GhostCodec` and scoring
-- [ ] FastAPI backend: runs, leaderboard, ghosts, remote config, lap validation
+- [x] Core gameplay: car physics, drift scoring, nitro, laps
+- [x] Ghost recording, compression and playback
+- [x] Unit tests for `DriftPhysics`, `GhostCodec` and scoring
+- [x] FastAPI backend: runs, leaderboard, ghosts, remote config, lap validation
 - [ ] Android build, device profiling, before/after performance log
 - [ ] Playable APK and gameplay GIF in this README
-- [ ] AI tooling log: what was generated and what was rewritten by hand
+- [ ] AI tooling log: what was generated and what was rewritten by hand ([started](docs/ai-log.md))
 
 **Deliberately out of scope:** extra cars or tracks, real-time multiplayer (ghosts give the feeling of racing someone without the networking risk), monetization, an iOS build, and realistic tire simulation. Arcade feel is the goal.
+
+---
+
+## Project layout
+
+```
+unity/Assets/Drift/Scripts/Core    pure C#: physics, scoring, laps, ghost codec (unit tested)
+unity/Assets/Drift/Scripts/Game    MonoBehaviours: car, camera, race, ghost, HUD, API client
+unity/Assets/Drift/Scripts/Editor  project setup and Android build
+unity/Assets/Drift/Tests/EditMode  NUnit tests
+unity/Assets/Resources/Tracks      harbor.json, shared with the server
+backend/                           FastAPI service, validation, tools/cli.py, pytest
+tools/core-tests                   runs the core tests on .NET without Unity
+docs/                              build notes, performance log, AI tool log
+```
 
 ---
 
